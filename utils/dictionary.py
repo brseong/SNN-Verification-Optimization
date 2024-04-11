@@ -6,16 +6,16 @@ import torch
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 mp = True #
 shuffle = True # 
-train = False # 
+train = True # 
 num_epochs = 1 # 1 default
 file_name = 'model_iris.pth'
 num_input = 4
-num_hidden = 5 # 5 default
+num_hidden = 64 # 5 default
 num_output = 3
 layers = [num_input, num_hidden, num_output]
-beta = 0.95
+beta = 0.9 # 0.95 default
 threshold = 1.0
-num_steps = 25 # 25 default
+num_steps = 15 # 25 default
 
 #Code Function typing
 NodeIdx = int; LayerIdx = int; TimeIdx = int
