@@ -22,6 +22,7 @@ from utils.encoding_mnist import *
 from utils.config import *
 from utils.etc import *
 from utils.debug_utils import *
+import matplotlib.pyplot as plt
 
 # transform = transforms.Compose([
 #             transforms.Resize((28, 28)),
@@ -70,9 +71,12 @@ def load_mnist() -> Tuple[TImageBatch,TLabelBatch,TImageBatch,TLabelBatch]:
     return images, labels, images_test, labels_test
 
 mgrid = np.mgrid[0:28, 0:28]
-def forward(weights_list:TWeightList, img:TImage, out_layer:np.ndarray|None=None):
+def forward(weights_list:TWeightList,
+            img:TImage,
+            layers_firing_time_return:list[np.ndarray]|None=None):
+    # Return by reference at firing_time_ptr.
     SpikeImage = np.zeros((28,28,num_steps+1))
-    firingTime = []
+    firingTime:list[np.ndarray] = []
     Spikes = []
     X = []
     for layer, neuron_of_layer in enumerate(n_layer_neurons[1:]):
@@ -99,9 +103,73 @@ def forward(weights_list:TWeightList, img:TImage, out_layer:np.ndarray|None=None
     #     # V = 0
     # else:
     V = int(np.argmin(firingTime[-1]))
-    if out_layer is not None:
-        out_layer[:] = firingTime[-1]
+    if layers_firing_time_return is not None:
+        layers_firing_time_return[:] = firingTime[:]
     return V
+
+gamma = 2
+target = np.zeros((n_layer_neurons[-1],))
+def backward(weights_list:TWeightList,
+             layers_firing_time:list[np.ndarray],
+             image:TImage,
+             label:int):
+    weights_list = [x.copy() for x in weights_list]
+    global target
+    # Computing the relative target firing times
+    min_firing = min(layers_firing_time[-1])
+    if min_firing == num_steps - 1:
+        target[:] = min_firing
+        target[label] = min_firing - gamma
+        target = target.astype(int)
+    else:
+        target[:] = layers_firing_time[-1][:]
+        to_change = (layers_firing_time[-1] - min_firing) < gamma
+        target[to_change] = min(min_firing + gamma, num_steps - 1)
+        target[label] = min_firing
+    
+    # Backward path
+    layer = len(n_layer_neurons) - 2  # Output layer
+    
+    delta_o = (target - layers_firing_time[layer]) / (num_steps-1)  # Error in the ouput layer
+
+    # Gradient normalization
+    norm = np.linalg.norm(delta_o)
+    if (norm != 0):
+        delta_o = delta_o / norm
+
+    # Updating hidden-output weights
+    hasFired_o = layers_firing_time[layer - 1] < layers_firing_time[layer][:,
+                                            np.newaxis]  # To find which hidden neurons has fired before the ouput neurons
+    weights_list[layer][:, :, 0] -= (delta_o[:, np.newaxis] * hasFired_o * lr[layer])  # Update hidden-ouput weights
+    weights_list[layer] -= lr[layer] * lamda[layer] * weights_list[layer]  # Weight regularization
+
+    # Backpropagating error to hidden neurons
+    delta_h = (np.multiply(delta_o[:, np.newaxis] * hasFired_o, weights_list[layer][:, :, 0])).sum(
+        axis=0)  # Backpropagated errors from ouput layer to hidden layer
+
+    layer = len(n_layer_neurons) - 3  # Hidden layer
+    
+    # Gradient normalization
+    norm = np.linalg.norm(delta_h)
+    if (norm != 0):
+        delta_h = delta_h / norm
+    # Updating input-hidden weights
+    hasFired_h = image < layers_firing_time[layer][:, np.newaxis,
+                                        np.newaxis]  # To find which input neurons has fired before the hidden neurons
+    weights_list[layer] -= lr[layer] * delta_h[:, np.newaxis, np.newaxis] * hasFired_h  # Update input-hidden weights
+    weights_list[layer] -= lr[layer] * lamda[layer] * weights_list[layer]  # Weight regularization
+    
+    return weights_list
+
+def test_weights(weights_list:TWeightList) -> None:
+    images, labels, *_ = load_mnist()
+    correct = 0
+    for i, (image, target) in (pbar:=tqdm(enumerate(zip(images,labels), start=1), total=len(images))):
+        predicted = forward(weights_list, image)
+        if predicted == target:
+            correct += 1
+        pbar.desc = f"Acc {correct/i*100:.2f}, predicted {predicted}, target {target}"
+    info(f"Total correctly classified test set images: {correct/len(images)*100:.3f}")
 
 def prepare_weights() -> TWeightList:
     if train:
@@ -114,19 +182,12 @@ def prepare_weights() -> TWeightList:
             weights_list.append(np.load(os.path.join(model_dir_path, f"weights_{layer}.npy")))
         info('Model loaded')
 
-    if not test: return weights_list
-    images, labels, images_test, labels_test = load_mnist()
-    correct = 0
-    for i, (image, target) in (pbar:=tqdm(enumerate(zip(images,labels), start=1), total=len(images))):
-        predicted = forward(weights_list, image)
-        if predicted == target:
-            correct += 1
-        pbar.desc = f"Acc {correct/i*100:.2f}, predicted {predicted}, target {target}"
-    info(f"Total correctly classified test set images: {correct/len(images)*100:.3f}")
+    if test:
+        test_weights(weights_list)
     return weights_list
 
 def run_test(cfg:CFG):
-    log_name = f"{strftime('%m%d%H%M', localtime())}_{cfg.log_name}_{num_steps}_{'_'.join(str(l) for l in n_layer_neurons)}_delta{cfg.deltas}.log"
+    log_name = f"{cfg.log_name}_{num_steps}_{'_'.join(str(l) for l in n_layer_neurons)}_delta{cfg.deltas}.log"
     logging.basicConfig(filename="log/" + log_name, level=logging.INFO)
     info(cfg)
 
@@ -140,7 +201,7 @@ def run_test(cfg:CFG):
     # mnist_test = datasets.MNIST(data_path, train=False, download=True, transform=transform)
     # test_loader = DataLoader(mnist_test, batch_size=1, shuffle=True, drop_last=True)
     
-    images, *_ = load_mnist()
+    images, labels, *_ = load_mnist()
     
     info('Data is loaded')
     
@@ -173,7 +234,7 @@ def run_test(cfg:CFG):
         samples_no_list:List[int] = []
         sampled_imgs:List[TImage] = []
         orig_preds:List[int] = []
-        for sample_no in random_sample([*range(len(images))], k=num_procs):
+        for sample_no in random_sample([*range(len(images))], k=cfg.num_samples):
             info(f"sample {sample_no} is drawn.")
             samples_no_list.append(sample_no)
             img:TImage = images[sample_no]
@@ -292,54 +353,74 @@ def run_test(cfg:CFG):
 
         samples_no_list:List[int] = []
         sampled_imgs:List[TImage] = []
+        sampled_labels:List[int] = []
         orig_preds:List[int] = []
-        for sample_no in random_sample([*range(len(images))], k=num_procs):
+        for sample_no in random_sample([*range(len(images))], k=cfg.num_samples):
             info(f"sample {sample_no} is drawn.")
             samples_no_list.append(sample_no)
             img:TImage = images[sample_no]
-            sampled_imgs.append(img) # type: ignore
+            label = labels[sample_no]
+            sampled_imgs.append(img)
+            sampled_labels.append(label)
             orig_preds.append(forward(weights_list, img))
         info(f"Sampling is completed with {num_procs} samples.")
 
         # For each delta
         for delta in cfg.deltas:
-            global check_sample_numpy_backend
-            def check_sample_numpy_backend(sample:Tuple[int, TImage, int]):
-                sample_no, img, orig_pred = sample
+            global check_sample_non_smt
+            def check_sample_non_smt(sample:Tuple[int, TImage, int, int],
+                                     adv_train:bool=False,
+                                     weights_list:TWeightList=weights_list):
+                sample_no, img, label, orig_pred = sample
                 
-                # Output property
                 info('Query processing starts')
                 tx = time.time()
                 sat_flag:bool = False
+                adv_spk_times = []
+                n_counterexamples = 0
                 for pertd_img in search_perts(img, delta):
-                    last_layer_spk_times = np.zeros((n_layer_neurons[-1],))
-                    pert_pred = forward(weights_list, pertd_img, last_layer_spk_times)
+                    pert_pred = forward(weights_list, pertd_img, spk_times:=[])
+                    adv_spk_times.append(spk_times)
+                    last_layer_spk_times = spk_times[-1]
                     not_orig_mask = [x for x in range(n_layer_neurons[-1]) if x!=pert_pred]
                     # It is equal to Not(spike_times[out_neuron, last_layer] >= spike_times[orig_neuron, last_layer]),
                     # we are checking p and Not(q) and q = And(q1, q2, ..., qn)
                     # so Not(q) is Or(Not(q1), Not(q2), ..., Not(qn))
-                    if orig_pred != pert_pred:
-                        info(f"Orig pred: {orig_pred}, Pert pred: {pert_pred}")
                     if np.any(last_layer_spk_times[not_orig_mask] <= last_layer_spk_times[orig_pred]):
                         sat_flag = True
-                        break
+                        pdb.set_trace()
+                        # if not adv_train:
+                        #     break
+                        n_counterexamples += 1
                 info(f"Checking done in time {time.time() - tx}")
                 if sat_flag:
-                    info(f"Not robust for sample {sample_no} and delta={delta}")
+                    if adv_train:
+                        info(f"Not robust for sample {sample_no} and delta={delta} with {n_counterexamples} counterexamples.")
+                        info(f"Start adversarial training.")
+                        updated_weights_list = weights_list
+                        for spk_times in adv_spk_times:
+                            updated_weights_list = backward(updated_weights_list, spk_times, img, label)
+                        test_weights(updated_weights_list)
+                        new_orig_pred = forward(updated_weights_list, img)
+                        new_sample = (*sample[:3],new_orig_pred)
+                        info(f"Completed adversarial training. Checking robustness again.")
+                        check_sample_non_smt(new_sample, adv_train=False, weights_list=updated_weights_list)
+                    else:
+                        info(f"Not robust for sample {sample_no} and delta={delta}")
                 elif sat_flag == False:
-                    info(f"Robust for sample {sample_no} and delta={delta}")
+                    info(f"Robust for sample {sample_no} and delta={delta}.")
                 info("")
                 return sat_flag
             
-            samples = zip(samples_no_list, sampled_imgs, orig_preds)
+            samples = zip(samples_no_list, sampled_imgs, sampled_labels, orig_preds)
             if mp:
                 with Pool(num_procs) as pool:
-                    pool.map(check_sample_numpy_backend, samples)
+                    pool.map(check_sample_non_smt, samples)
                     pool.close()
                     pool.join()
             else:
                 for sample in samples:
-                    check_sample_numpy_backend(sample)
+                    check_sample_non_smt(sample)
 
         info("")
 

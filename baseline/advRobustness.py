@@ -23,7 +23,7 @@ transform = transforms.Compose([
     transforms.Normalize((0,), (1,))])
 
 
-log_name = f"{strftime('%m%d%H%M', localtime())}_baseline_{num_steps}_{'_'.join(str(l) for l in neurons_in_layers)}_delta_{tuple(delta)}.log"
+log_name = f"{strftime('%m%d%H%M', localtime())}_mnist_baseline_z3_{num_steps}_{'_'.join(str(l) for l in neurons_in_layers)}_delta_{tuple(delta)}.log"
 logging.basicConfig(filename=f"../log/{log_name}", level=logging.INFO)
 stdout = print
 print = lambda x: logging.getLogger().info(x) or stdout(x)
@@ -67,8 +67,10 @@ def check_sample(sample_no:int):
     tx = time.time()
     data, target = mnist_train[sample_no]
     inp = spikegen.rate(data, num_steps=num_steps)
+    
+    print(inp.shape)
     op = net.forward(inp.view(num_steps, -1))[0]
-    label = int(torch.cat(op).sum(dim=0).argmax())
+    label = int(torch.stack(op, dim=0).sum(dim=0).argmax())
     print(f'single input ran in {time.time()-tx} sec')
     
     # Input property
