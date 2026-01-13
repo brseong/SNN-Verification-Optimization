@@ -37,7 +37,7 @@ TWeight = dict[In_Out_InLayer, float]
 TSpikeTime = dict[tuple[NodeIdx, LayerIdx], ArithRef]
 
 TWeightShape = tuple[Literal[400], Literal[28], Literal[28]] | tuple[Literal[10], Literal[400], Literal[1]]
-TWeightList = list[np.ndarray[TWeightShape, np.dtype[np.float_]]]
+TWeightList = list[np.ndarray[TWeightShape, np.dtype[np.float64]]]
 
 TImage = np.ndarray[tuple[Literal[28],Literal[28]], np.dtype[np.int_]]
 TImageBatch = np.ndarray[tuple[Literal[60000],Literal[28],Literal[28]], np.dtype[np.int_]]

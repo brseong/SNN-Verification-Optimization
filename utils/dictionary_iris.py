@@ -39,7 +39,7 @@ TSpikeTime = dict[tuple[NodeIdx, LayerIdx], ArithRef]
 TW1Shape = tuple[Literal[400], Literal[28], Literal[28]]
 TW2Shape = tuple[Literal[10], Literal[400], Literal[1]]
 TWeightShape = TW1Shape | TW2Shape
-TWeightList = list[np.ndarray[TWeightShape, np.dtype[np.float_]]]
+TWeightList = list[np.ndarray[TWeightShape, np.dtype[np.float64]]]
 
 TImage = np.ndarray[tuple[Literal[28],Literal[28]], np.dtype[np.int_]]
 TSpkTrain = np.ndarray[tuple[Literal[28],Literal[28],int], np.dtype[np.int_]]
