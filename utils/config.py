@@ -13,6 +13,7 @@ class CFG:
     #Delta-perturbation params
     num_samples:int = 14
     deltas:tuple[int,...] = (1,)
+    epsilons:tuple[int,...] = (10, 50, 100, 200, 250,)
     z3:bool = False
     milp:bool = False
     adv_attack:bool = False
