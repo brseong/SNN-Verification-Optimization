@@ -16,6 +16,7 @@ from utils.config import CFG
 from utils.debug import info
 from utils.mnist_net import forward, backward, prepare_weights
 from utils.ann import SimpleANN, get_gradient, load_ann
+import matplotlib.pyplot as plt
 
 def run_z3(cfg: CFG, *, weights_list: TWeightList, images: TImageBatch):
     n_layer_neurons = cfg.n_layer_neurons
@@ -280,7 +281,76 @@ def run_milp_single(cfg:CFG, weights_list:TWeightList, s0_orig:TImage, pred_orig
         print("MILP result:\t", milp_result)
 
     return model, total_time
+
+def fgsm_attack(image: np.ndarray, epsilon: int, data_grad: np.ndarray, min_clip: int = 0, max_clip: int = 255) -> np.ndarray:
+    """
+    fgsm_attack performs the Fast Gradient Sign Method attack on the input image.
+    """
+    data_grad_sign = np.sign(data_grad)
+    perturbed_image = image - epsilon * data_grad_sign
+    perturbed_image = np.clip(perturbed_image, min_clip, max_clip)
+    return perturbed_image.astype(image.dtype)
+
+def visualize_fgsm_attack(original, adversarial, epsilon, sample_idx=0):
+    """
+    Visualizes the FGSM attack by displaying original image, perturbation, and adversarial image.
     
+    Args:
+        original: Original image (numpy array)
+        adversarial: Attacked image (numpy array)
+        epsilon: Attack strength (for title display)
+        sample_idx: Sample index to display (used for batch processing)
+    """
+    
+    # Handle batch dimension if present
+    if original.ndim > 3:
+        img_orig = original[sample_idx]
+        img_adv = adversarial[sample_idx]
+    else:
+        img_orig = original
+        img_adv = adversarial
+
+    # Transpose channel dimension from (C, H, W) to (H, W, C) if needed
+    if img_orig.shape[0] in [1, 3]:
+        img_orig = np.transpose(img_orig, (1, 2, 0))
+        img_adv = np.transpose(img_adv, (1, 2, 0))
+    
+    cmap = 'gray_r'
+    # Squeeze channel dimension for grayscale images (H, W, 1) -> (H, W)
+    if img_orig.shape[-1] == 1:
+        img_orig = img_orig.squeeze()
+        img_adv = img_adv.squeeze()
+
+    # Calculate perturbation (difference between adversarial and original)
+    perturbation = img_adv.astype(np.float32) - img_orig.astype(np.float32)
+
+    # Create visualization with three subplots
+    plt.figure(figsize=(12, 4))
+    
+    # Original image
+    plt.subplot(1, 3, 1)
+    plt.title("Original Image")
+    plt.imshow(img_orig.astype(np.uint8), cmap=cmap)
+    plt.axis('off')
+
+    # Perturbation (noise/change)
+    # Shows pixel-wise changes; blue-white-red colormap indicates negative-zero-positive changes
+    # In TTFS, this change represents spike timing shifts
+    plt.subplot(1, 3, 2)
+    plt.title(f"Perturbation (Noise)\nEpsilon: {epsilon}")
+    plt.imshow(perturbation, cmap='bwr', vmin=-epsilon, vmax=epsilon) 
+    plt.colorbar()
+    plt.axis('off')
+
+    # Adversarial image
+    plt.subplot(1, 3, 3)
+    plt.title("Adversarial Image (FGSM)")
+    plt.imshow(img_adv.astype(np.uint8), cmap=cmap)
+    plt.axis('off')
+
+    plt.tight_layout()
+    plt.savefig(f"log/fgsm_attack_epsilon_{epsilon}_sample_{sample_idx}.png")
+
 def run_test(cfg: CFG):
     n_layer_neurons = cfg.n_layer_neurons
     num_steps = cfg.num_steps
@@ -356,53 +426,109 @@ def run_test(cfg: CFG):
         info(f"Sampling is completed with {num_procs} samples.")
 
         # For each delta
-        for delta in cfg.deltas:
-            global check_sample_direct
+        # for delta in cfg.deltas:
+        #     global check_sample_direct
 
-            def check_sample_direct(
-                sample: tuple[int, TImage, int, int, tuple[np.ndarray,np.ndarray]],
-                weights_list: TWeightList = weights_list,
-            ):
-                sample_no, img, label, orig_pred, (priority, sign) = sample
+        #     def check_sample_direct(
+        #         sample: tuple[int, TImage, int, int, tuple[np.ndarray,np.ndarray]],
+        #         weights_list: TWeightList = weights_list,
+        #     ):
+        #         sample_no, img, label, orig_pred, (priority, sign) = sample
 
-                info("Query processing starts")
-                tx = time.time()
-                flag = False
+        #         info("Query processing starts")
+        #         tx = time.time()
+        #         flag = False
 
-                for pertd_img in search_perts(img, delta, priority, sign):
-                    pert_pred = forward(cfg, weights_list, pertd_img, spk_times := [])
+        #         for pertd_img in search_perts(img, delta, priority, sign):
+        #             pert_pred = forward(cfg, weights_list, pertd_img, spk_times := [])
                     
-                    last_layer_spk_times = spk_times[-1]
-                    not_orig_mask = [
-                        x for x in range(n_layer_neurons[-1]) if x != pert_pred
-                    ]
-                    # It is equal to Not(spike_times[out_neuron, last_layer] >= spike_times[orig_neuron, last_layer]),
-                    # we are checking p and Not(q) and q = And(q1, q2, ..., qn)
-                    # so Not(q) is Or(Not(q1), Not(q2), ..., Not(qn))
-                    if np.any(
-                        last_layer_spk_times[not_orig_mask]
-                        <= last_layer_spk_times[orig_pred]
-                    ):
-                        flag = True
-                        break
-                info(f"Checking done in time {time.time() - tx}")
-                if flag:
-                    info(f"Not robust for sample {sample_no} and delta={delta}")
-                else:
-                    info(f"Robust for sample {sample_no} and delta={delta}.")
-                info("")
-                return flag
+        #             last_layer_spk_times = spk_times[-1]
+        #             not_orig_mask = [
+        #                 x for x in range(n_layer_neurons[-1]) if x != pert_pred
+        #             ]
+        #             # It is equal to Not(spike_times[out_neuron, last_layer] >= spike_times[orig_neuron, last_layer]),
+        #             # we are checking p and Not(q) and q = And(q1, q2, ..., qn)
+        #             # so Not(q) is Or(Not(q1), Not(q2), ..., Not(qn))
+        #             if np.any(
+        #                 last_layer_spk_times[not_orig_mask]
+        #                 <= last_layer_spk_times[orig_pred]
+        #             ):
+        #                 flag = True
+        #                 break
+        #         info(f"Checking done in time {time.time() - tx}")
+        #         if flag:
+        #             info(f"Not robust for sample {sample_no} and delta={delta}")
+        #         else:
+        #             info(f"Robust for sample {sample_no} and delta={delta}.")
+        #         info("")
+        #         return flag
 
-            samples = zip(samples_no_list, sampled_imgs, sampled_labels, orig_preds, search_schedule)
-            if mp:
-                with Pool(num_procs) as pool:
-                    pool.map(check_sample_direct, samples)
-                    pool.close()
-                    pool.join()
+        #     samples = zip(samples_no_list, sampled_imgs, sampled_labels, orig_preds, search_schedule)
+        #     if mp:
+        #         with Pool(num_procs) as pool:
+        #             pool.map(check_sample_direct, samples)
+        #             pool.close()
+        #             pool.join()
+        #     else:
+        #         for sample in samples:
+        #             check_sample_direct(sample)
+
+    
+        info(f"FGSM attack start")
+        for epsilon in cfg.epsilons:
+            info(f"Epsilon: {epsilon}")
+            
+            clean_image_correct = 0
+            adv_image_success = 0
+            
+            for sample_no, img, label, orig_pred in zip(samples_no_list, sampled_imgs, sampled_labels, orig_preds):
+                spike_times = []
+                orig_pred = forward(cfg, weights_list, img, layers_firing_time_return=spike_times)
+                if orig_pred != label:
+                    info(f"Original prediction incorrect for sample {sample_no}, skipping...")
+                    continue
+                
+                clean_image_correct += 1
+                
+                # Calculate gradient
+                _, delta_i = backward(cfg, weights_list, spike_times, img, label)
+                # --- Sparsity Check Code Start ---
+                total_elements = delta_i.size
+                non_zero_count = np.count_nonzero(delta_i)
+                zero_count = total_elements - non_zero_count
+                
+                sparsity = (zero_count / total_elements) * 100
+                density = (non_zero_count / total_elements) * 100
+                
+                info(f"Sample {sample_no} gradient sparsity: {sparsity:.2f}%, density: {density:.2f}%")
+                
+                input_grad = delta_i
+                # Generate adversarial example
+                perturbed_img = fgsm_attack(img, epsilon, input_grad, min_clip=0, max_clip=num_steps - 1)
+                visualize_fgsm_attack(img, perturbed_img, epsilon)
+                # Test the perturbed image
+                pert_pred = forward(cfg, weights_list, perturbed_img)
+                
+                if pert_pred != label:
+                    adv_image_success += 1
+                    
+                # last_layer_spk_times = spk_times[-1]
+                # not_orig_mask = [
+                #     x for x in range(n_layer_neurons[-1]) if x != pert_pred
+                # ]
+                # if np.any(
+                #     last_layer_spk_times[not_orig_mask]
+                #     <= last_layer_spk_times[orig_pred]
+                # ):
+                #     info(f"Not robust for sample {sample_no} and epsilon={epsilon}")
+                # else:
+                #     info(f"Robust for sample {sample_no} and epsilon={epsilon}.")
+            if clean_image_correct > 0:
+                asr = adv_image_success / clean_image_correct * 100
+                clean_acc = clean_image_correct / len(samples_no_list) * 100
+                info(f"Epsilon: {epsilon}\t| Clean Accuracy: {clean_acc:.2f}%\t| Adversarial Success Rate: {asr:.2f}%")
             else:
-                for sample in samples:
-                    check_sample_direct(sample)
-
+                info(f"Epsilon: {epsilon}\t| No correctly classified samples to evaluate.")
         info("")
 
 
