@@ -10,3 +10,5 @@ pulp
 spikingjelly
 nir
 nirtorch
+pandas
+jupyter

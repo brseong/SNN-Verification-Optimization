@@ -30,7 +30,8 @@ def forward(cfg:CFG,
     
     SpikeImage[mgrid[0], mgrid[1], img] = 1
     for layer in range(len(n_layer_neurons)-1):
-        Voltage = np.cumsum(np.tensordot(weights_list[layer], SpikeList[layer]), 1)
+        Current = np.tensordot(weights_list[layer], SpikeList[layer]) # shape: (out, in_1, in_2) @ (in_1, in_2, time) -> (out, time)
+        Voltage = np.cumsum(Current, 1) # shape: (out, time) -> (out, time)
         Voltage[:, num_steps-1] = threshold + 1
         if voltage_return is not None:
             voltage_return.append(Voltage)
@@ -43,6 +44,9 @@ def forward(cfg:CFG,
     V = int(np.argmin(firingTime[-1]))
     if layers_firing_time_return is not None:
         layers_firing_time_return[:] = firingTime[:]
+        
+    # Current = np.tensordot(weights_list[0], SpikeList[0]) # shape: (out, in_1, in_2) @ (in_1, in_2, time) -> (out, time)
+    # assert np.all(np.sum(Current[:,:int(np.min(firingTime[-1]))-2].clip(min=0), 1) < threshold) , "Current exceeds threshold, invalid input spikes or weights."
         
     return V
 

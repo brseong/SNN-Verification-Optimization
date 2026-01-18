@@ -288,8 +288,10 @@ def search_perts(
     delta: int,
     priority: np.ndarray,
     grad_sign: np.ndarray,
-    prefix_set: set[frozenset[tuple[int, int]]],
+    prefix_set: set[frozenset[frozenset[tuple[int, int]]]],
     prefix_lengths: set[int],
+    weight: np.ndarray[tuple[Literal[10], Literal[28], Literal[28]], np.dtype[np.float64]],
+    # voltage: np.ndarray[tuple[Literal[10], Literal[5]], np.dtype[np.float64]],
     idx: int = 0,
     pert: TImage | None = None,
 ) -> Generator[TImage, None, None]:
@@ -315,7 +317,17 @@ def search_perts(
             new_pert = pert.copy()
             new_pert[loc_2d[0], loc_2d[1]] += delta_at_neuron
             yield from search_perts(
-                cfg, img, delta - abs(delta_at_neuron), priority, grad_sign, prefix_set, prefix_lengths, idx + 1, new_pert
+                cfg,
+                img,
+                delta - abs(delta_at_neuron),
+                priority,
+                grad_sign,
+                prefix_set,
+                prefix_lengths,
+                weight,
+                # voltage,
+                idx + 1,
+                new_pert,
             )
 
 # Recursively find available adversarial attacks.
@@ -325,38 +337,51 @@ def search_perts_psm(
     delta: int,
     priority: np.ndarray,
     grad_sign: np.ndarray,
-    prefix_set: set[tuple[
-        frozenset[tuple[int, int]],
-        frozenset[tuple[int, int]],
-    ]],
+    prefix_set: set[frozenset[frozenset[tuple[int, int]]]],
     prefix_lengths: set[int],
+    weight: np.ndarray[tuple[Literal[10], Literal[28], Literal[28]], np.dtype[np.float64]],
+    # voltage: np.ndarray[tuple[Literal[10], Literal[5]], np.dtype[np.float64]],
     idx: int = 0,
     pert: TImage | None = None,
 ) -> Generator[TImage, None, None]:
     # Initial case
     if pert is None:
         pert = np.zeros_like(img, dtype=img.dtype)
-
+    
     # Last case
     if delta == 0:
         img_pert = img + pert
-        prefix = frozenset()
-        t = 0
-        while len(prefix) < max(prefix_lengths):
-            rows, cols = np.nonzero(img_pert <= t)
-            prefix = frozenset(zip(rows, cols))
-            # prefix = frozenset(
-            #     (i, j)
-            #     for i in range(28)
-            #     for j in range(28)
-            #     if img_pert[i, j] <= t
-            # )
-            if prefix in prefix_set:
-                info(f"Prefix {prefix} is in prefix_set, pruning search.")
-                return
-            t += 1
-        else:
-            yield img_pert
+        prefix = set[frozenset[tuple[int, int]]]()
+        unique_times = np.unique(img_pert)
+        rectified_sums = np.zeros(weight.shape[0], dtype=np.float64)
+        includes_negative = [False] * weight.shape[0]
+        for t in unique_times:
+            new_time_bin = extract_time_bin(img_pert, t)
+            for out_neuron in range(weight.shape[0]):
+                bin_sum_at_neuron = sum(weight[out_neuron, loc_2d[0], loc_2d[1]] for loc_2d in new_time_bin)
+                includes_negative[out_neuron] |= bin_sum_at_neuron < 0.0
+                rectified_sums[out_neuron] += max(0.0, bin_sum_at_neuron)
+                if includes_negative[out_neuron] and rectified_sums[out_neuron] >= threshold:
+                    break
+            else:
+                prefix.add(new_time_bin)
+                # for all out neurons
+                # check whether cumulative sum of rectified voltage crossed threshold
+                # if any of them did, break and yield perturbed image
+                
+                # # Alternative implementation:
+                # prefix = frozenset(
+                #     (i, j)
+                #     for i in range(28)
+                #     for j in range(28)
+                #     if img_pert[i, j] <= t
+                # )
+                if frozenset(prefix) in prefix_set:
+                    return
+                if len(prefix) < max(prefix_lengths):
+                    break
+            break
+        yield img_pert
     # Search must be terminated at the end of image.
     elif idx < len(priority):
         loc_2d = priority[idx]
@@ -372,8 +397,107 @@ def search_perts_psm(
             new_pert = pert.copy()
             new_pert[loc_2d[0], loc_2d[1]] += delta_at_neuron
             yield from search_perts_psm(
-                cfg, img, delta - abs(delta_at_neuron), priority, grad_sign, prefix_set, prefix_lengths, idx + 1, new_pert,
+                cfg,
+                img,
+                delta - abs(delta_at_neuron),
+                priority,
+                grad_sign,
+                prefix_set,
+                prefix_lengths,
+                weight,
+                # voltage,
+                idx + 1,
+                new_pert,
             )
+
+# Recursively find available adversarial attacks.
+def search_perts_psm_synonym(
+    cfg: CFG,
+    img: TImage,
+    delta: int,
+    priority: np.ndarray,
+    grad_sign: np.ndarray,
+    prefix_set: set[frozenset[frozenset[tuple[int, int]]]],
+    prefix_lengths: set[int],
+    weight: np.ndarray[tuple[Literal[10], Literal[28], Literal[28]], np.dtype[np.float64]],
+    voltage: np.ndarray[tuple[Literal[10], Literal[5]], np.dtype[np.float64]],
+    idx: int = 0,
+    pert: TImage | None = None,
+    synonym_flag: bool = False,
+) -> Generator[TImage, None, None]:
+    # Initial case
+    if pert is None:
+        pert = np.zeros_like(img, dtype=img.dtype)
+    
+    # Last case
+    if delta == 0:
+        img_pert = img + pert
+        prefix = set[frozenset[tuple[int, int]]]()
+        unique_times = np.unique(img_pert)
+        for t in unique_times:
+            prefix.add(extract_time_bin(img_pert, t))
+            # # Alternative implementation:
+            # prefix = frozenset(
+            #     (i, j)
+            #     for i in range(28)
+            #     for j in range(28)
+            #     if img_pert[i, j] <= t
+            # )
+            if frozenset(prefix) in prefix_set:
+                return
+            if len(prefix) < max(prefix_lengths):
+                break
+        
+        
+        yield img_pert
+    # Search must be terminated at the end of image.
+    elif idx < len(priority):
+        loc_2d = priority[idx]
+        orig_time = int(img[loc_2d[0], loc_2d[1]])
+        # Clamp delta at current location
+        available_deltas = [*range(
+            -min(orig_time, delta), min((cfg.num_steps - 1) - orig_time, delta) + 1
+        )]
+        if grad_sign[loc_2d[0], loc_2d[1]] > 0:
+            available_deltas.reverse()  # If gradient is negative, try negative perturbation first:
+                                        # to find adversarial examples faster.
+        for delta_at_neuron in available_deltas:
+            new_pert = pert.copy()
+            new_pert[loc_2d[0], loc_2d[1]] += delta_at_neuron
+            new_voltage = voltage.copy()
+            new_voltage[:, orig_time:orig_time+delta_at_neuron] -= weight[:, None, loc_2d[0], loc_2d[1]]
+            new_voltage[:, orig_time + delta_at_neuron] += weight[:, loc_2d[0], loc_2d[1]]
+            synonym_flag &= bool(np.all(new_voltage[:, orig_time:orig_time+delta_at_neuron] < threshold))
+            
+            yield from search_perts_psm_synonym(
+                cfg,
+                img,
+                delta - abs(delta_at_neuron),
+                priority,
+                grad_sign,
+                prefix_set,
+                prefix_lengths,
+                weight,
+                new_voltage,
+                idx + 1,
+                new_pert,
+                synonym_flag,
+            )
+
+
+def extract_prefix(
+    cfg:CFG,
+    orig_pred:int,
+    pertd_img:np.ndarray,
+    last_layer_spk_times:np.ndarray
+    ) -> frozenset[frozenset[tuple[int, int]]]:
+    unique_times = np.unique(pertd_img)
+    vaild_times = unique_times[unique_times <= last_layer_spk_times[orig_pred] - len(cfg.n_layer_neurons) + 1]
+    # rows, cols = np.nonzero(pertd_img <= last_layer_spk_times[orig_pred] - len(cfg.n_layer_neurons) + 1)
+    return frozenset(extract_time_bin(pertd_img, t) for t in vaild_times)
+
+def extract_time_bin(pertd_img:TImage, t:int)  -> frozenset[tuple[int, int]]:
+    return frozenset(zip(*np.nonzero(pertd_img == t)))
 
 def run_test(cfg: CFG):
     n_layer_neurons = cfg.n_layer_neurons
@@ -441,10 +565,10 @@ def run_test(cfg: CFG):
                 tx = time.time()
                 flag = False
 
-                prefix_set = set[frozenset[tuple[int, int]]]()
+                prefix_set = set[frozenset[frozenset[tuple[int, int]]]]()
                 prefix_lengths = {0}
                 pert_gen = search_perts_psm if cfg.prefix_set_match else search_perts
-                for pertd_img in pert_gen(cfg, img, delta, priority, sign, prefix_set, prefix_lengths):
+                for pertd_img in pert_gen(cfg, img, delta, priority, sign, prefix_set, prefix_lengths, weights_list[0]):
                     pert_pred = forward(cfg, weights_list, pertd_img, spk_times := [])
                     
                     last_layer_spk_times = spk_times[-1]
@@ -468,8 +592,7 @@ def run_test(cfg: CFG):
                     
                     if cfg.prefix_set_match:
                         # Update prefix set
-                        rows, cols = np.nonzero(pertd_img <= last_layer_spk_times[orig_pred] - len(cfg.n_layer_neurons) + 1)
-                        prefix = frozenset(zip(rows, cols))
+                        prefix = extract_prefix(cfg, orig_pred, pertd_img, last_layer_spk_times)
                         prefix_set.add(prefix)
                         prefix_lengths.add(len(prefix))
                     

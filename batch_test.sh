@@ -2,12 +2,13 @@ export CUBLAS_WORKSPACE_CONFIG=:4096:8
 trap "kill 0" SIGINT
 
 encoding="latency" # "baseline" or "latency", only changes the name of the output log.
-deltas=(1)
-test_types=("fmnist") # "mnist" "fmnist"
-solvers=("milp") # "np" "z3" "milp"
+deltas=(1 2)
+test_types=("mnist") # "mnist" "fmnist"
+solvers=("np") # "np" "z3" "milp"
+psms=("--psm") # "--psm" or ""
 advs=("") # "--adv" or ""
-hidden_neurons=(20) # 128 256 384 512
-num_steps=(5 6 7 8) # 64 128 192 256
+hidden_neurons=(128 256 384 512) # 128 256 384 512
+num_steps=(64 128 192 256) # 64 128 192 256
 repeat=1 # number of repetitions for each setting
 for solver in ${solvers[@]}
 do
