@@ -354,33 +354,45 @@ def search_perts_psm(
         prefix = set[frozenset[tuple[int, int]]]()
         unique_times = np.unique(img_pert)
         rectified_sums = np.zeros(weight.shape[0], dtype=np.float64)
-        includes_negative = [False] * weight.shape[0]
+        includes_negative = np.zeros(weight.shape[0], dtype=bool)
         for t in unique_times:
-            new_time_bin = extract_time_bin(img_pert, t)
-            for out_neuron in range(weight.shape[0]):
-                bin_sum_at_neuron = sum(weight[out_neuron, loc_2d[0], loc_2d[1]] for loc_2d in new_time_bin)
-                includes_negative[out_neuron] |= bin_sum_at_neuron < 0.0
-                rectified_sums[out_neuron] += max(0.0, bin_sum_at_neuron)
-                if includes_negative[out_neuron] and rectified_sums[out_neuron] >= threshold:
-                    break
-            else:
-                prefix.add(new_time_bin)
-                # for all out neurons
-                # check whether cumulative sum of rectified voltage crossed threshold
-                # if any of them did, break and yield perturbed image
-                
-                # # Alternative implementation:
-                # prefix = frozenset(
-                #     (i, j)
-                #     for i in range(28)
-                #     for j in range(28)
-                #     if img_pert[i, j] <= t
-                # )
-                if frozenset(prefix) in prefix_set:
-                    return
-                if len(prefix) < max(prefix_lengths):
-                    break
-            break
+            # new_time_bin = extract_time_bin(img_pert, t)
+            t_mask = img_pert == t
+            
+            # for all out neurons
+            # check whether cumulative sum of rectified voltage crossed threshold
+            # if any of them did, break and yield perturbed image
+            bin_sums = weight[:, t_mask].sum(axis=-1) # shape: (out_neuron,)
+            neg_mask = bin_sums < 0.0
+            if np.any(neg_mask):
+                includes_negative |= neg_mask
+                rectified_sums[~neg_mask] += bin_sums[~neg_mask]
+                if np.any(includes_negative & (rectified_sums >= threshold)):
+                    break # -> cannot prune. yield img_pert
+            
+            # Alternative implementation:
+            # for out_neuron in range(weight.shape[0]):
+            #     bin_sum_at_neuron = sum(weight[out_neuron, loc_2d[0], loc_2d[1]] for loc_2d in new_time_bin)
+            #     includes_negative[out_neuron] |= bin_sum_at_neuron < 0.0
+            #     rectified_sums[out_neuron] += max(0.0, bin_sum_at_neuron)
+            #     if includes_negative[out_neuron] and rectified_sums[out_neuron] >= threshold:
+            #         break
+            # else: {
+            prefix.add(frozenset(zip(*np.nonzero(t_mask))))
+            
+            # # Alternative implementation:
+            # prefix = frozenset(
+            #     (i, j)
+            #     for i in range(28)
+            #     for j in range(28)
+            #     if img_pert[i, j] <= t
+            # )
+            if frozenset(prefix) in prefix_set:
+                return
+            if len(prefix) < max(prefix_lengths):
+                break # -> cannot prune. yield img_pert
+            # }
+            # break # Matches to "for {} else {} break."
         yield img_pert
     # Search must be terminated at the end of image.
     elif idx < len(priority):
@@ -611,8 +623,11 @@ def run_test(cfg: CFG):
                     pool.close()
                     pool.join()
             else:
+                import cProfile
                 for sample in samples:
-                    check_sample_direct(sample)
+                    with cProfile.Profile() as pr:
+                        check_sample_direct(sample)
+                        breakpoint()
 
         info("")
 

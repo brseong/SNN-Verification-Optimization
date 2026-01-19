@@ -1,7 +1,7 @@
 export CUBLAS_WORKSPACE_CONFIG=:4096:8
 
 encoding="latency"
-delta=3
+delta=2
 test_type="mnist"
 manual_indices=(58469 )
 # solvers=("np" "z3" "milp")
