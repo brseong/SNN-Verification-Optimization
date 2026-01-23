@@ -45,9 +45,9 @@ def run_z3(cfg: CFG, *, weights_list: TWeightList, images: TImageBatch):
 
     # For each delta
     for delta in cfg.deltas:
-        global check_sample
+        global check_sample_z3
 
-        def check_sample(sample: tuple[int, TImage, int]):
+        def check_sample_z3(sample: tuple[int, TImage, int]):
             sample_no, img, orig_pred = sample
             orig_neuron = (orig_pred, 0)
             tx = time.time()
@@ -115,12 +115,12 @@ def run_z3(cfg: CFG, *, weights_list: TWeightList, images: TImageBatch):
         samples = zip(samples_no_list, sampled_imgs, orig_preds)
         if mp:
             with Pool(num_procs) as pool:
-                pool.map(check_sample, samples)
+                pool.map(check_sample_z3, samples)
                 pool.close()
                 pool.join()
         else:
             for sample in samples:
-                check_sample(sample)
+                check_sample_z3(sample)
 
     info("")
 
@@ -141,9 +141,22 @@ def run_milp(cfg: CFG, *, weights_list:TWeightList, images: TImageBatch, MAP = {
     samples_no_list, sampled_imgs, orig_preds = sample_images_and_predictions(cfg, weights_list, images)
     for delta in cfg.deltas:
         info(f"Delta: {delta}")
-        for sample_no, img, orig_pred in zip(samples_no_list, sampled_imgs, orig_preds):
+        global run_milp_thread
+        def run_milp_thread(sample: tuple[int, TImage, int]):
+            sample_no, img, orig_pred = sample
             _model, _tx = run_milp_single(cfg, weights_list, img, orig_pred, delta=delta)
             info(f"Sample {sample_no}\t|\ttime: {_tx:.13f}\t|\tstatus: {MAP[_model.status]}")
+        if mp:
+            with Pool(num_procs) as pool:
+                pool.map(run_milp_thread, zip(samples_no_list, sampled_imgs, orig_preds))
+                pool.close()
+                pool.join()
+        else:
+            for sample in zip(samples_no_list, sampled_imgs, orig_preds):
+                run_milp_thread(sample)
+        # for sample_no, img, orig_pred in zip(samples_no_list, sampled_imgs, orig_preds):
+        #     _model, _tx = run_milp_single(cfg, weights_list, img, orig_pred, delta=delta)
+        #     info(f"Sample {sample_no}\t|\ttime: {_tx:.13f}\t|\tstatus: {MAP[_model.status]}")
 
 def run_milp_single(cfg:CFG, weights_list:TWeightList, s0_orig:TImage, pred_orig:int, delta:int = 1) -> tuple[pulp.LpProblem, float]:
     n_layer_neurons = cfg.n_layer_neurons
@@ -265,7 +278,7 @@ def run_milp_single(cfg:CFG, weights_list:TWeightList, s0_orig:TImage, pred_orig
     model += target_spike_time
 
     # Solve
-    solver = pulp.PULP_CBC_CMD(msg=True, logPath="log/milp.log")
+    solver = pulp.PULP_CBC_CMD(logPath="log/milp.log")
     
     tx = time.time()
     model.solve(solver)
@@ -362,7 +375,8 @@ def search_perts_psm(
             # for all out neurons
             # check whether cumulative sum of rectified voltage crossed threshold
             # if any of them did, break and yield perturbed image
-            bin_sums = weight[:, t_mask].sum(axis=-1) # shape: (out_neuron,)
+            # bin_sums = weight[:, t_mask].sum(axis=-1) # shape: (out_neuron,)
+            bin_sums = (weight * t_mask[None,...]).sum(axis=(-2, -1))
             neg_mask = bin_sums < 0.0
             if np.any(neg_mask):
                 includes_negative |= neg_mask
@@ -421,81 +435,6 @@ def search_perts_psm(
                 idx + 1,
                 new_pert,
             )
-
-# Recursively find available adversarial attacks.
-def search_perts_psm_synonym(
-    cfg: CFG,
-    img: TImage,
-    delta: int,
-    priority: np.ndarray,
-    grad_sign: np.ndarray,
-    prefix_set: set[frozenset[frozenset[tuple[int, int]]]],
-    prefix_lengths: set[int],
-    weight: np.ndarray[tuple[Literal[10], Literal[28], Literal[28]], np.dtype[np.float64]],
-    voltage: np.ndarray[tuple[Literal[10], Literal[5]], np.dtype[np.float64]],
-    idx: int = 0,
-    pert: TImage | None = None,
-    synonym_flag: bool = False,
-) -> Generator[TImage, None, None]:
-    # Initial case
-    if pert is None:
-        pert = np.zeros_like(img, dtype=img.dtype)
-    
-    # Last case
-    if delta == 0:
-        img_pert = img + pert
-        prefix = set[frozenset[tuple[int, int]]]()
-        unique_times = np.unique(img_pert)
-        for t in unique_times:
-            prefix.add(extract_time_bin(img_pert, t))
-            # # Alternative implementation:
-            # prefix = frozenset(
-            #     (i, j)
-            #     for i in range(28)
-            #     for j in range(28)
-            #     if img_pert[i, j] <= t
-            # )
-            if frozenset(prefix) in prefix_set:
-                return
-            if len(prefix) < max(prefix_lengths):
-                break
-        
-        
-        yield img_pert
-    # Search must be terminated at the end of image.
-    elif idx < len(priority):
-        loc_2d = priority[idx]
-        orig_time = int(img[loc_2d[0], loc_2d[1]])
-        # Clamp delta at current location
-        available_deltas = [*range(
-            -min(orig_time, delta), min((cfg.num_steps - 1) - orig_time, delta) + 1
-        )]
-        if grad_sign[loc_2d[0], loc_2d[1]] > 0:
-            available_deltas.reverse()  # If gradient is negative, try negative perturbation first:
-                                        # to find adversarial examples faster.
-        for delta_at_neuron in available_deltas:
-            new_pert = pert.copy()
-            new_pert[loc_2d[0], loc_2d[1]] += delta_at_neuron
-            new_voltage = voltage.copy()
-            new_voltage[:, orig_time:orig_time+delta_at_neuron] -= weight[:, None, loc_2d[0], loc_2d[1]]
-            new_voltage[:, orig_time + delta_at_neuron] += weight[:, loc_2d[0], loc_2d[1]]
-            synonym_flag &= bool(np.all(new_voltage[:, orig_time:orig_time+delta_at_neuron] < threshold))
-            
-            yield from search_perts_psm_synonym(
-                cfg,
-                img,
-                delta - abs(delta_at_neuron),
-                priority,
-                grad_sign,
-                prefix_set,
-                prefix_lengths,
-                weight,
-                new_voltage,
-                idx + 1,
-                new_pert,
-                synonym_flag,
-            )
-
 
 def extract_prefix(
     cfg:CFG,
@@ -568,13 +507,128 @@ def run_test(cfg: CFG):
         for delta in cfg.deltas:
             global check_sample_direct
 
-            def check_sample_direct(
+            def check_sample_bab(
+                sample: tuple[int, TImage, int, int, tuple[np.ndarray, np.ndarray]],
+                weights_list: TWeightList = weights_list,
+            ):
+                sample_no, img, label, orig_pred, (priority, sign) = sample
+
+                # [STEP 1] Baseline Forward 실행
+                base_spks = []
+                forward(cfg, weights_list, img, base_spks)
+                base_times = base_spks[-1]
+
+                num_classes = weights_list[-1].shape[0]
+                found_adversarial = [False]
+
+                synaptic_delay = len(cfg.n_layer_neurons) - 1  # 각 레이어 간의 시냅스 지연 (고정값)
+
+                # 메모이제이션 테이블: (pos, eps, allow_pos) -> min_d
+                memo = {}
+
+                def bab_dfs(current_img:TImage, pixel_pos:int, rem_neg:int, rem_pos:int):
+                    if found_adversarial[0]:
+                        return
+
+                    # [STEP 1] 현재 상태의 출력 시간 확인
+                    current_spks = []
+                    forward(cfg, weights_list, current_img, current_spks)
+                    current_last_layer = current_spks[-1]
+
+                    target_time = current_last_layer[orig_pred]
+                    min_non_target_time = np.min([current_last_layer[i] for i in range(num_classes) if i != orig_pred])
+
+                    if min_non_target_time <= target_time:
+                        # print("Adversarial found at leaf node.")
+                        found_adversarial[0] = True
+                        return
+
+                    if pixel_pos == len(active_priority):
+                        # print("Reached leaf node without finding adversarial.")
+                        return
+
+                    if rem_neg == 0 and rem_pos == 0:
+                        return
+
+                    idx_x, idx_y = active_priority[pixel_pos]
+
+                    orig_val = current_img[idx_x, idx_y]
+                    max_t = cfg.num_steps  # SNN 시뮬레이션의 최대 타임스텝
+
+                    # ---------------------------------------------------------
+                    # [경우의 수 나누기 - Branching]
+                    # ---------------------------------------------------------
+
+
+                    # 1. 양수 섭동 (모든 중간 값 v > orig_val 시도)
+                    if rem_pos >= 1: # and (orig_val + synaptic_delay <= target_time):
+                        for v in range(int(orig_val) + 1, max_t):
+                            cost = int(v - orig_val)
+                            if rem_pos >= cost:
+                                next_img = current_img.copy()
+                                next_img[idx_x, idx_y] = v
+
+                                # 양수 섭동을 했으므로, 이후 단계에서도 권한을 유지하거나 여기서 닫음
+                                bab_dfs(next_img.copy(), pixel_pos + 1, rem_neg, rem_pos - cost)
+
+                                if found_adversarial[0]:
+                                    return
+                                
+                    # 2. 음수 섭동 (모든 중간 값 v < orig_val 시도)
+                    if rem_neg >= 1:
+                        for v in range(int(orig_val)):
+                            cost = int(orig_val - v)
+                            if rem_neg >= cost and (orig_val - cost + synaptic_delay <= target_time):
+                                next_img = current_img.copy()
+                                next_img[idx_x, idx_y] = v
+
+                                # 음수 섭동 후에도 양수 권한을 열어둘지 닫을지 결정
+                                bab_dfs(next_img.copy(), pixel_pos + 1, rem_neg - cost, rem_pos)
+
+                                if found_adversarial[0]:
+                                    return
+
+                    # 3. 섭동 없음 (No Perturbation)
+                    # 미래에 양수 섭동 권한을 유지할지, 여기서 닫을지 선택
+                    bab_dfs(current_img.copy(), pixel_pos + 1, rem_neg, rem_pos)
+
+                    if found_adversarial[0]:
+                        return
+
+                target_time = base_times[orig_pred]
+                # Non-target 중 가장 빨리 터지는 놈 혹은 target_time 중 더 빠른 것을 기준점으로 잡음
+                min_non_target = np.min([base_times[i] for i in range(num_classes) if i != orig_pred])
+                # T_ref: 이 시간 이후에 도착하는 입력 스파이크는 결과를 뒤집기에 너무 늦음
+                t_ref = min(target_time, min_non_target)
+                
+                for i in range(delta + 1):
+
+                    rem_neg = i
+                    rem_pos = delta - i
+                    # [STEP 2] 인과율 필터링 (Active Set 구성)
+                    # 입력 스파이크 시간(orig_val)이 (기준 시간 + 예산)보다 크면 절대 개입 불가
+                    active_priority = []
+
+                    for px, py in priority:
+                        orig_val = img[px, py]
+                        # 입력 스파이크를 최대로 당겨도(orig_val - delta) 기준 시간(t_ref)보다 늦으면 배제
+
+                        if orig_val - rem_neg + synaptic_delay <= t_ref + rem_pos:
+                            active_priority.append((px, py))
+
+                    info(
+                        f"Filtered pixels: {len(priority)} -> {len(active_priority)} (Reduced by {len(priority)-len(active_priority)})"
+                    )
+
+                    bab_dfs(img.copy(), 0, rem_neg, rem_pos)
+
+                return found_adversarial[0]
+                
+            def check_sample_dfs(
                 sample: tuple[int, TImage, int, int, tuple[np.ndarray,np.ndarray]],
                 weights_list: TWeightList = weights_list,
             ):
                 sample_no, img, label, orig_pred, (priority, sign) = sample
-                info("Query processing starts")
-                tx = time.time()
                 flag = False
 
                 prefix_set = set[frozenset[frozenset[tuple[int, int]]]]()
@@ -599,7 +653,6 @@ def run_test(cfg: CFG):
                         # info(f"Not robust for sample {sample_no} with perturbed image.")
                         # info(pertd_img)
                         # info(f"Perturbation:\n{pertd_img - img}")
-                        # breakpoint()
                         break
                     
                     if cfg.prefix_set_match:
@@ -607,7 +660,21 @@ def run_test(cfg: CFG):
                         prefix = extract_prefix(cfg, orig_pred, pertd_img, last_layer_spk_times)
                         prefix_set.add(prefix)
                         prefix_lengths.add(len(prefix))
-                    
+                
+                return flag
+                
+            def check_sample_direct(
+                sample: tuple[int, TImage, int, int, tuple[np.ndarray,np.ndarray]],
+                weights_list: TWeightList = weights_list,
+            ):  
+                sample_no, img, label, orig_pred, (priority, sign) = sample
+                tx = time.time()
+                if cfg.branch_and_bound:
+                    info("BaB-based Query processing (Dual-side Perturbation)")
+                    flag = check_sample_bab(sample, weights_list)
+                else:
+                    info("Query processing starts")
+                    flag = check_sample_dfs(sample, weights_list)
                 info(f"Checking done in time {time.time() - tx}")
                 if flag:
                     info(f"Not robust for sample {sample_no} and delta={delta}")
@@ -623,11 +690,8 @@ def run_test(cfg: CFG):
                     pool.close()
                     pool.join()
             else:
-                import cProfile
                 for sample in samples:
-                    with cProfile.Profile() as pr:
-                        check_sample_direct(sample)
-                        breakpoint()
+                    check_sample_direct(sample)
 
         info("")
 

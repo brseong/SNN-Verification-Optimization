@@ -20,8 +20,8 @@ lr = [.2, .2]  # The learning rate of hidden and ouput neurons
 lamda = [0.000001, 0.000001]  # The regularization penalty for hidden and ouput neurons
 
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-mp = False #
-num_procs:int = 14
+mp = True #
+num_procs:int = 64
 
 #Code Function typing
 NodeIdx = tuple[int, int]; LayerIdx = int; TimeIdx = int # To define neuron states

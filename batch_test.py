@@ -24,6 +24,7 @@ def parse():
     parser.add_argument("--milp", dest="milp", action="store_true", default=False)
     parser.add_argument("--np", dest="np", action="store_true", default=False)
     parser.add_argument("--psm", dest="psm", action="store_true", default=False)
+    parser.add_argument("--bab", dest="bab", action="store_true", default=False)
     parser.add_argument("--adv", dest="adv", action="store_true", default=False)
 
     return parser.parse_args()
@@ -41,6 +42,7 @@ def prepare_log_name(parser:Namespace) -> str:
     elif parser.np:
         prefix = "np"
         if parser.psm: prefix += "-psm"
+        elif parser.bab: prefix += "-bab"
         if parser.adv: prefix += "-adv"
     else: raise ValueError("Invalid solver type.")
     words.append(prefix)
@@ -72,6 +74,7 @@ if __name__ == "__main__":
                         z3=parser.z3,
                         milp=parser.milp,
                         prefix_set_match=parser.psm,
+                        branch_and_bound=parser.bab,
                         adv_attack=parser.adv,
                         n_layer_neurons=(28*28, parser.n_hidden_neurons, 10),
                         layer_shapes=((28,28), (parser.n_hidden_neurons,1), (10,1)),

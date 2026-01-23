@@ -12,3 +12,4 @@ nir
 nirtorch
 pandas
 jupyter
+cupy-cuda12x

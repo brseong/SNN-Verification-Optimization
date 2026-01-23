@@ -26,19 +26,19 @@ if GPU:
 else:
     cp=np
 
-cp.cuda.Device(1).use()
+cp.cuda.Device(2).use()
 # Parameter setting
 thr = [100, 100]  # The threshold of hidden and output neurons
 lr = [.2, .2]  # The learning rate of hidden and ouput neurons
 lamda = [0.000001, 0.000001]  # The regularization penalty for hidden and ouput neurons
 b = [5, 50]  # The upper bound of weight initializations for hidden and ouput neurons
 a = [0, 0]  # The lower bound of weight initializations for hidden and ouput neurons
-Nepoch = 100  # The maximum number of training epochs
+Nepoch = 10  # The maximum number of training epochs
 NumOfClasses = 10  # Number of classes
 Nlayers = 2  # Number of layers
-NhidenNeurons = 20  # Number of hidden neurons
+NhidenNeurons = 512  # Number of hidden neurons
 Dropout = [0, 0]
-tmax = 8 - 1  # Simulatin time
+tmax = 48 - 1  # Simulatin time
 GrayLevels = 255  # Image GrayLevels
 gamma = 3 # The gamma parameter in the relative target firing calculation
 
@@ -255,7 +255,7 @@ for epoch in tqdm(range(Nepoch), desc=f"{tmax+1} step, {NhidenNeurons} hidden, E
         #     best_perf = testPerf
         save_dir_path = osp.join(
             osp.dirname(__file__),
-            f"../models/ettfs_{tmax+1}_784_{NhidenNeurons}_{NumOfClasses}")
+            f"../models/{tmax+1}_784_{NhidenNeurons}_{NumOfClasses}")
         if not osp.isdir(save_dir_path):
             os.mkdir(save_dir_path)
         if trainPerf > best_perf:

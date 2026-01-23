@@ -27,6 +27,7 @@ class CFG:
     z3:bool = False
     milp:bool = False
     prefix_set_match:bool = False
+    branch_and_bound:bool = False
     adv_attack:bool = False
     n_layer_neurons:tuple[int, ...] = (image_len*image_len, 10, 10) # [28*28, 100, 10] default
     layer_shapes:tuple[tuple[int, int], ...] = ((image_len,image_len), (10, 1), (10, 1))
