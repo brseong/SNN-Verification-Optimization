@@ -298,12 +298,12 @@ def run_milp_single(cfg:CFG, weights_list:TWeightList, s0_orig:TImage, pred_orig
 def search_perts(
     cfg: CFG,
     img: TImage,
+    orig_pred: int,
     delta: int,
     priority: np.ndarray,
-    grad_sign: np.ndarray,
     prefix_set: set[frozenset[frozenset[tuple[int, int]]]],
     prefix_lengths: set[int],
-    weight: np.ndarray[tuple[Literal[10], Literal[28], Literal[28]], np.dtype[np.float64]],
+    weights_list: TWeightList,
     # voltage: np.ndarray[tuple[Literal[10], Literal[5]], np.dtype[np.float64]],
     idx: int = 0,
     pert: TImage | None = None,
@@ -323,21 +323,18 @@ def search_perts(
         available_deltas = [*range(
             -min(orig_time, delta), min((cfg.num_steps - 1) - orig_time, delta) + 1
         )]
-        if grad_sign[loc_2d[0], loc_2d[1]] > 0:
-            available_deltas.reverse()  # If gradient is negative, try negative perturbation first:
-                                        # to find adversarial examples faster.
         for delta_at_neuron in available_deltas:
             new_pert = pert.copy()
             new_pert[loc_2d[0], loc_2d[1]] += delta_at_neuron
             yield from search_perts(
                 cfg,
                 img,
+                orig_pred,
                 delta - abs(delta_at_neuron),
                 priority,
-                grad_sign,
                 prefix_set,
                 prefix_lengths,
-                weight,
+                weights_list,
                 # voltage,
                 idx + 1,
                 new_pert,
@@ -347,12 +344,12 @@ def search_perts(
 def search_perts_psm(
     cfg: CFG,
     img: TImage,
+    orig_pred: int,
     delta: int,
     priority: np.ndarray,
-    grad_sign: np.ndarray,
     prefix_set: set[frozenset[frozenset[tuple[int, int]]]],
     prefix_lengths: set[int],
-    weight: np.ndarray[tuple[Literal[10], Literal[28], Literal[28]], np.dtype[np.float64]],
+    weights_list: TWeightList,
     # voltage: np.ndarray[tuple[Literal[10], Literal[5]], np.dtype[np.float64]],
     idx: int = 0,
     pert: TImage | None = None,
@@ -362,12 +359,12 @@ def search_perts_psm(
         pert = np.zeros_like(img, dtype=img.dtype)
     
     # Last case
-    if delta == 0:
+    if idx == len(priority) or delta == 0:
         img_pert = img + pert
         prefix = set[frozenset[tuple[int, int]]]()
         unique_times = np.unique(img_pert)
-        rectified_sums = np.zeros(weight.shape[0], dtype=np.float64)
-        includes_negative = np.zeros(weight.shape[0], dtype=bool)
+        rectified_sums = np.zeros(weights_list[0].shape[0], dtype=np.float64)
+        includes_negative = np.zeros(weights_list[0].shape[0], dtype=bool)
         for t in unique_times:
             # new_time_bin = extract_time_bin(img_pert, t)
             t_mask = img_pert == t
@@ -376,7 +373,7 @@ def search_perts_psm(
             # check whether cumulative sum of rectified voltage crossed threshold
             # if any of them did, break and yield perturbed image
             # bin_sums = weight[:, t_mask].sum(axis=-1) # shape: (out_neuron,)
-            bin_sums = (weight * t_mask[None,...]).sum(axis=(-2, -1))
+            bin_sums = (weights_list[0] * t_mask[None,...]).sum(axis=(-2, -1))
             neg_mask = bin_sums < 0.0
             if np.any(neg_mask):
                 includes_negative |= neg_mask
@@ -392,7 +389,8 @@ def search_perts_psm(
             #     if includes_negative[out_neuron] and rectified_sums[out_neuron] >= threshold:
             #         break
             # else: {
-            prefix.add(frozenset(zip(*np.nonzero(t_mask))))
+            rows, cols = np.nonzero(t_mask)
+            prefix.add(frozenset(zip(rows, cols)))
             
             # # Alternative implementation:
             # prefix = frozenset(
@@ -416,21 +414,24 @@ def search_perts_psm(
         available_deltas = [*range(
             -min(orig_time, delta), min((cfg.num_steps - 1) - orig_time, delta) + 1
         )]
-        if grad_sign[loc_2d[0], loc_2d[1]] > 0:
-            available_deltas.reverse()  # If gradient is negative, try negative perturbation first:
-                                        # to find adversarial examples faster.
+        forward(cfg, weights_list, img, base_spks:=list[np.ndarray]())
+        base_times = base_spks[-1]
+        target_time = base_times[orig_pred]
         for delta_at_neuron in available_deltas:
+            if (delta_at_neuron < 0 
+                and 
+                orig_time + len(cfg.n_layer_neurons) - 1 > target_time + delta): continue
             new_pert = pert.copy()
             new_pert[loc_2d[0], loc_2d[1]] += delta_at_neuron
             yield from search_perts_psm(
                 cfg,
                 img,
+                orig_pred,
                 delta - abs(delta_at_neuron),
                 priority,
-                grad_sign,
                 prefix_set,
                 prefix_lengths,
-                weight,
+                weights_list,
                 # voltage,
                 idx + 1,
                 new_pert,
@@ -578,7 +579,7 @@ def run_test(cfg: CFG):
                     if rem_neg >= 1:
                         for v in range(int(orig_val)):
                             cost = int(orig_val - v)
-                            if rem_neg >= cost and (orig_val - cost + synaptic_delay <= target_time):
+                            if rem_neg >= cost and (orig_val - cost + synaptic_delay <= target_time + rem_pos):
                                 next_img = current_img.copy()
                                 next_img[idx_x, idx_y] = v
 
@@ -631,10 +632,24 @@ def run_test(cfg: CFG):
                 sample_no, img, label, orig_pred, (priority, sign) = sample
                 flag = False
 
+                base_spks = list[np.ndarray]()
+                forward(cfg, weights_list, img, base_spks)
+                base_times = base_spks[-1]
+                t_ref = base_times.min()
+                active_priority = []
+
+                for px, py in priority:
+                    orig_val = img[px, py]
+                    # 입력 스파이크를 최대로 당겨도(orig_val - delta) 기준 시간(t_ref)보다 늦으면 배제
+
+                    if orig_val + len(cfg.n_layer_neurons) - 1 - delta <= t_ref:
+                        active_priority.append((px, py))
+                active_priority = np.array(active_priority)
+                
                 prefix_set = set[frozenset[frozenset[tuple[int, int]]]]()
                 prefix_lengths = {0}
                 pert_gen = search_perts_psm if cfg.prefix_set_match else search_perts
-                for pertd_img in pert_gen(cfg, img, delta, priority, sign, prefix_set, prefix_lengths, weights_list[0]):
+                for pertd_img in pert_gen(cfg, img, orig_pred, delta, active_priority, prefix_set, prefix_lengths, weights_list):
                     pert_pred = forward(cfg, weights_list, pertd_img, spk_times := [])
                     
                     last_layer_spk_times = spk_times[-1]
