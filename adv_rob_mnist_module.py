@@ -562,10 +562,10 @@ def run_test(cfg: CFG):
 
 
                     # 1. 양수 섭동 (모든 중간 값 v > orig_val 시도)
-                    if rem_pos >= 1: # and (orig_val + synaptic_delay <= target_time):
+                    if rem_pos >= 1:
                         for v in range(int(orig_val) + 1, max_t):
                             cost = int(v - orig_val)
-                            if rem_pos >= cost:
+                            if rem_pos >= cost: # and (v + synaptic_delay <= target_time + rem_pos - cost):
                                 next_img = current_img.copy()
                                 next_img[idx_x, idx_y] = v
 
@@ -579,7 +579,7 @@ def run_test(cfg: CFG):
                     if rem_neg >= 1:
                         for v in range(int(orig_val)):
                             cost = int(orig_val - v)
-                            if rem_neg >= cost and (orig_val - cost + synaptic_delay <= target_time + rem_pos):
+                            if rem_neg >= cost and (v + synaptic_delay <= target_time + rem_pos):
                                 next_img = current_img.copy()
                                 next_img[idx_x, idx_y] = v
 
@@ -636,16 +636,21 @@ def run_test(cfg: CFG):
                 forward(cfg, weights_list, img, base_spks)
                 base_times = base_spks[-1]
                 t_ref = base_times.min()
-                active_priority = []
-
-                for px, py in priority:
-                    orig_val = img[px, py]
-                    # 입력 스파이크를 최대로 당겨도(orig_val - delta) 기준 시간(t_ref)보다 늦으면 배제
-
-                    if orig_val + len(cfg.n_layer_neurons) - 1 - delta <= t_ref:
-                        active_priority.append((px, py))
-                active_priority = np.array(active_priority)
                 
+                # if cfg.prefix_set_match:
+                #     active_priority = []
+                #     for px, py in priority:
+                #         orig_val = img[px, py]
+                #         # 입력 스파이크를 최대로 당겨도(orig_val - delta) 기준 시간(t_ref)보다 늦으면 배제
+
+                #         if orig_val + len(cfg.n_layer_neurons) - 1 - delta <= t_ref:
+                #             active_priority.append((px, py))
+                #     active_priority = np.array(active_priority)
+                # else:
+                #     active_priority = priority
+
+                active_priority = priority
+
                 prefix_set = set[frozenset[frozenset[tuple[int, int]]]]()
                 prefix_lengths = {0}
                 pert_gen = search_perts_psm if cfg.prefix_set_match else search_perts

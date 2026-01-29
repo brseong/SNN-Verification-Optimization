@@ -14,7 +14,7 @@ solver="np"
 strategy="--psm"
 # adv=""
 num_samples=14
-hidden_neuron=20
-num_steps=5
+hidden_neuron=256
+num_steps=64
 repeat=1
 python batch_test.py -p ${encoding} --delta-max ${delta} --test-type ${test_type} --${solver} ${strategy} --num-samples ${num_samples} --n-hidden-neurons ${hidden_neuron} --num-steps ${num_steps} --repeat ${repeat} #--manual-indices ${manual_indices[@]}  

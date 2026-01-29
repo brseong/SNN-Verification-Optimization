@@ -7,13 +7,13 @@ export NUMEXPR_NUM_THREADS=1
 trap "kill 0" SIGINT
 
 encoding="latency" # "baseline" or "latency", only changes the name of the output log.
-deltas=(3 4)
+deltas=(3)
 test_types=("mnist") # "mnist" "fmnist"
-solvers=("np" "milp") # "np" "z3" "milp"
-strategies=("--bab") # "bab" or "psm"
+solvers=("np") # "np" "z3" "milp"
+strategies=("") # "bab" or "psm"
 # advs=("") # "--adv" or ""
-hidden_neurons=(20) # 128 256 384 512
-num_steps=(5) # 16 32 48 64
+hidden_neurons=(128) # 128 256 384 512
+num_steps=(256) # 16 32 48 64
 repeat=1 # number of repetitions for each setting
 for solver in ${solvers[@]}
 do
