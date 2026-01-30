@@ -13,12 +13,24 @@ S4NN/S4NN.ipynb - Trains MNIST temporal model.
 S4NN/S4NN_fmnist.ipynb - Trains FashionMNIST temporal model.
 batch_test.py - Perform formal verification about temporal models.
 
-## ANN Train
-```shell
-python -m utils.ann --n-hidden-neurons 512
-```
+## Getting Started
 
-## SNN Verification
-```shell
-python batch_test.py -p latency --delta-max 2 --test-type mnist --np --num-samples 14 --n-hidden-neurons 512 --num-steps 256 --adv --repeat 1
-```
+Follow these steps to set up the development environment and reproduce the results of paper.
+
+```bash
+# 1. Create a virtual environment
+python -m venv venv
+
+# 2. Activate the virtual environment
+source venv/bin/activate
+
+# 3. Install dependencies
+python -m pip install -r requirements.txt
+
+# 4. Run Verification
+chmod +x ./test.sh
+./test.sh
+
+# or:
+# chmod +x ./batch_test.sh
+# ./batch_test.sh

@@ -6,13 +6,10 @@ export VECLIB_MAXIMUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 
 encoding="latency"
-delta=2
+delta=3
 test_type="mnist"
-manual_indices=(48540)
-# solvers=("np" "z3" "milp")
-solver="np"
-strategy="--psm"
-# adv=""
+solver="np" # "np" "z3" "milp"
+strategy="--psm" # "--psm" ""
 num_samples=14
 hidden_neuron=256
 num_steps=64
