@@ -1,5 +1,6 @@
 # Towards Efficient Formal Verification of Spiking Neural Networks
 Implemented with python==3.12. Further informations are provided in requirements.txt
+Requires CUDA 12.x to train temporal-coded SNNs.
 
 ## Files
 Baseline is from https://github.com/Soham-Banerjee/SMT-Encoding-for-Spiking-Neural-Network.
@@ -19,7 +20,7 @@ Follow these steps to set up the development environment and reproduce the resul
 
 ```bash
 # 1. Create a virtual environment
-python -m venv venv
+python3 -m venv venv
 
 # 2. Activate the virtual environment
 source venv/bin/activate
